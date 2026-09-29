@@ -1,5 +1,4 @@
 __pycache__
 .vscode
 .log
-sam_detector.py
-main_efficient.py
+test/

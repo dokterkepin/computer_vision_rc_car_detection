@@ -130,6 +130,10 @@ def draw_detection(frame, box, score, mask, offset):
     cv2.rectangle(frame, (b[0], b[1]), (b[2], b[3]), (0, 255, 0), 3)
     cv2.putText(frame, f"rc car {score:.2f}", (b[0], max(30, b[1] - 10)),
                 cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+    center_x = int((b[0] + b[2]) / 2)
+    center_y = int((b[1] + b[3]) / 2)
+    cv2.putText(frame, f"(X: {center_x}, Y: {center_y})", (20, 100),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 200, 0), 2)
 
 
 def draw_overlay(frame, window, trail, state, fps):
@@ -151,13 +155,13 @@ def parse_args():
     ap.add_argument("--cam-fps", type=int, default=30)
     ap.add_argument("--weights", default="/home/dokterkepin/models/sam3.pt")
     ap.add_argument("--conf", type=float, default=0.3)
-    ap.add_argument("--imgsz", type=int, default=644,
-                    help="448 ~17 FPS, 644 ~10 FPS, 1008 ~3.7 FPS")
+    ap.add_argument("--imgsz", type=int, default=448,
+                    help="320, 448, 644, 1008")
     ap.add_argument("--crop-scale", type=float, default=4.0)
     ap.add_argument("--min-crop", type=int, default=320)
     ap.add_argument("--max-miss", type=int, default=5)
     ap.add_argument("--record", default=None)
-    ap.add_argument("--display-scale", type=float, default=0.5)
+    ap.add_argument("--display-scale", type=float, default=1.0)
     return ap.parse_args()
 
 
@@ -172,7 +176,6 @@ def main():
     track = {"center": None, "velocity": np.zeros(2), "size": 0, "misses": 0}
     trail, frame_times = [], []
     writer = None
-    cv2.namedWindow("sam3 rc car", cv2.WINDOW_NORMAL)
 
     while not camera_state["stop"]:
         frame = get_frame()

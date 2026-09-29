@@ -1,4 +1,7 @@
 __pycache__
 .vscode
 .log
-test/
+sam3/live_simple.py
+sam3/main_efficient.py
+sam3/sam_detector.py
+sam3/test.py

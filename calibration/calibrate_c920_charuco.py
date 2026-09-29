@@ -13,7 +13,7 @@ MARKER_LENGTH = 0.018
 CAMERA_SOURCE = 0
 IMAGE_WIDTH = 1920
 IMAGE_HEIGHT = 1080
-OUTPUT_FILE = "c930_charuco_calibration.npz"
+OUTPUT_FILE = "c920_charuco_calibration.npz"
 
 
 dictionary = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_6X6_250)
@@ -26,8 +26,11 @@ board = cv2.aruco.CharucoBoard(
 detector = cv2.aruco.CharucoDetector(board)
 
 camera = cv2.VideoCapture(CAMERA_SOURCE)
+camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
 camera.set(cv2.CAP_PROP_FRAME_WIDTH, IMAGE_WIDTH)
 camera.set(cv2.CAP_PROP_FRAME_HEIGHT, IMAGE_HEIGHT)
+camera.set(cv2.CAP_PROP_FPS, 30)
+camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
 if not camera.isOpened():
     raise RuntimeError("Could not open the C930 camera")
@@ -87,7 +90,7 @@ while True:
         2,
     )
 
-    cv2.imshow("C930 Charuco Calibration", display)
+    cv2.imshow("C920 Charuco Calibration", display)
     key = cv2.waitKey(1) & 0xFF
 
     if key == ord("s"):
@@ -112,15 +115,21 @@ while True:
             continue
 
         print("Calibrating...")
-        error, camera_matrix, dist_coeffs, rvecs, tvecs = (
-            cv2.aruco.calibrateCameraCharuco(
-                charuco_corners,
-                charuco_ids,
-                board,
-                image_size,
-                None,
-                None,
-            )
+        board_corners = np.asarray(board.getChessboardCorners(), dtype=np.float32)
+        object_points = [
+            board_corners[np.asarray(ids).reshape(-1)]
+            for ids in charuco_ids
+        ]
+        image_points = [
+            np.asarray(corners, dtype=np.float32).reshape(-1, 2)
+            for corners in charuco_corners
+        ]
+        error, camera_matrix, dist_coeffs, rvecs, tvecs = cv2.calibrateCamera(
+            object_points,
+            image_points,
+            image_size,
+            None,
+            None,
         )
 
         np.savez(

@@ -66,21 +66,38 @@ def field_points(field_width, field_height):
 def main():
     parser = argparse.ArgumentParser(description="Detect AprilTags/ArUco field references.")
     parser.add_argument("--source", default="/dev/video0")
-    parser.add_argument("--width", type=int, default=640)
-    parser.add_argument("--height", type=int, default=480)
+    parser.add_argument("--width", type=int, default=1920)
+    parser.add_argument("--height", type=int, default=1080)
+    parser.add_argument("--camera-calibration", default="c920_charuco_calibration.npz")
     parser.add_argument("--family", default="april:36h11")
-    parser.add_argument("--field-width-mm", type=float, required=True)
-    parser.add_argument("--field-height-mm", type=float, required=True)
+    parser.add_argument("--field-width-mm", type=float, default=280.0)
+    parser.add_argument("--field-height-mm", type=float, default=340.0)
     parser.add_argument("--output", default="calibration/homography.npz")
     args = parser.parse_args()
+
+    calibration = np.load(args.camera_calibration)
+    camera_matrix = calibration["camera_matrix"]
+    dist_coeffs = calibration["dist_coeffs"]
+    calibration_size = (
+        int(calibration["image_width"]),
+        int(calibration["image_height"]),
+    )
+    if (args.width, args.height) != calibration_size:
+        raise ValueError(
+            f"camera resolution {(args.width, args.height)} does not match "
+            f"calibration resolution {calibration_size}"
+        )
 
     source = str(args.source).replace("/dev/video", "")
     camera = cv2.VideoCapture(
         int(source) if source.isdigit() else args.source,
         cv2.CAP_V4L2,
     )
+    camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+    camera.set(cv2.CAP_PROP_FPS, 30)
+    camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if not camera.isOpened():
         raise RuntimeError(f"could not open camera {args.source}")
 
@@ -97,6 +114,7 @@ def main():
         if not ok:
             break
 
+        frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
         corners, ids, _ = detect_markers(detector, frame)
         centers = marker_centers(corners, ids)
         image_points = []

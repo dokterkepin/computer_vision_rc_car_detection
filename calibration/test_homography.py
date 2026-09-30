@@ -17,8 +17,8 @@ def on_mouse(event, x, y, flags, parameter):
 
 def main():
     parser = argparse.ArgumentParser(description="Test field homography with a known point.")
-    parser.add_argument("--camera-calibration", default="c920_charuco_calibration.npz")
-    parser.add_argument("--homography", default="homography.npz")
+    parser.add_argument("--camera-calibration", default="calibration/matrix/c920_charuco_calibration.npz")
+    parser.add_argument("--homography", default="calibration/matrix/homography_v2.npz")
     parser.add_argument("--source", default="/dev/video0")
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)

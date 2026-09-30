@@ -6,29 +6,8 @@ import cv2
 import numpy as np
 
 
-APRILTAG_FAMILIES = {
-    "36h11": cv2.aruco.DICT_APRILTAG_36h11,
-    "36h10": cv2.aruco.DICT_APRILTAG_36h10,
-    "16h5": cv2.aruco.DICT_APRILTAG_16h5,
-}
-ARUCO_FAMILIES = {
-    "4x4_50": cv2.aruco.DICT_4X4_50,
-    "5x5_100": cv2.aruco.DICT_5X5_100,
-}
-
-
-def get_dictionary(family):
-    if family.startswith("april:"):
-        name = family.split(":", 1)[1]
-        values = APRILTAG_FAMILIES
-    elif family.startswith("aruco:"):
-        name = family.split(":", 1)[1]
-        values = ARUCO_FAMILIES
-    else:
-        raise ValueError("family must start with april: or aruco:")
-    if name not in values:
-        raise ValueError(f"unknown marker family: {name}")
-    return cv2.aruco.getPredefinedDictionary(values[name])
+def get_apriltag_dictionary():
+    return cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_APRILTAG_36h11)
 
 
 def make_detector(dictionary):
@@ -64,15 +43,14 @@ def field_points(field_width, field_height):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Detect AprilTags/ArUco field references.")
+    parser = argparse.ArgumentParser(description="Detect AprilTag field references.")
     parser.add_argument("--source", default="/dev/video0")
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
-    parser.add_argument("--camera-calibration", default="c920_charuco_calibration.npz")
-    parser.add_argument("--family", default="april:36h11")
-    parser.add_argument("--field-width-mm", type=float, default=280.0)
-    parser.add_argument("--field-height-mm", type=float, default=340.0)
-    parser.add_argument("--output", default="calibration/homography.npz")
+    parser.add_argument("--camera-calibration", default="calibration/matrix/c920_charuco_calibration.npz")
+    parser.add_argument("--field-width-mm", type=float, default=1500.0)
+    parser.add_argument("--field-height-mm", type=float, default=1200.0)
+    parser.add_argument("--output", default="calibration/matrix/homography_v2.npz")
     args = parser.parse_args()
 
     calibration = np.load(args.camera_calibration)
@@ -101,7 +79,7 @@ def main():
     if not camera.isOpened():
         raise RuntimeError(f"could not open camera {args.source}")
 
-    detector = make_detector(get_dictionary(args.family))
+    detector = make_detector(get_apriltag_dictionary())
     known_world = field_points(args.field_width_mm, args.field_height_mm)
     homography = None
     output = Path(args.output)
@@ -152,7 +130,7 @@ def main():
                 homography=homography,
                 field_width_mm=args.field_width_mm,
                 field_height_mm=args.field_height_mm,
-                family=args.family,
+                family="april:36h11",
             )
             print(f"saved {output}")
         if key == ord("q"):

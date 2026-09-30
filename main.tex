@@ -136,7 +136,11 @@ four non-collinear correspondences were found.}
 
 \section{Homography and real-world output}
 
-After undistortion, the detected tag centers form image points
+The floor is a two-dimensional plane, even though its image is tilted by the
+camera.  The camera height, tilt, and rotation do not need to be measured
+manually.  They are contained in the relationship between the four detected
+AprilTag centers and their known floor coordinates.  First, lens distortion is
+removed.  The detected tag centers then form image points
 $p_i=(u_i,v_i)$ and the measured layout forms world points
 $P_i=(x_i,y_i)$.  OpenCV computes the image-to-floor transformation:
 
@@ -145,12 +149,50 @@ H, _ = cv2.findHomography(image_points, world_points)
 floor_point = cv2.perspectiveTransform(pixel_point, H)
 \end{verbatim}
 
-The $3\times3$ matrix $H$ maps any point on the floor from pixels to
-millimeters.  It corrects perspective, so there is no single
-millimeters-per-pixel value across the image.  The bottom-center of the
-car detection is used when the desired point is the car's contact with the
-floor; the car center is reported according to the assignment convention.
-The camera and tags remain fixed while $H$ is used.
+The formula behind these OpenCV functions uses homogeneous coordinates:
+\[
+\begin{bmatrix}x'\\y'\\w'\end{bmatrix}
+=
+H\begin{bmatrix}u\\v\\1\end{bmatrix},
+\qquad
+x=\frac{x'}{w'},\quad y=\frac{y'}{w'}.
+\]
+The matrix $H$ has nine entries, but multiplying every entry by the same
+number does not change the mapping, so it has eight independent values.  Each
+known point correspondence supplies two equations.  Four non-collinear
+AprilTag centers therefore provide the eight equations needed to solve for
+$H$.  In this project, the correspondences are
+\[
+\begin{array}{c|c}
+\text{detected pixel center} & \text{known floor coordinate}\\
+\hline
+\text{ID 0 center} & (0,0)\\
+\text{ID 1 center} & (W,0)\\
+\text{ID 2 center} & (W,H)\\
+\text{ID 3 center} & (0,H)
+\end{array}
+\]
+where $W$ and $H$ are the measured center-to-center distances in
+millimeters.  Thus the tags provide both the shape of the coordinate frame
+and its physical scale.  The matrix automatically accounts for the fact
+that the far side of the field occupies fewer pixels than the near side:
+the perspective division by $w'$ changes the local scale over the image.
+No manual ``millimeters per pixel'' value or camera tilt angle is required.
+
+After $H$ is saved, the tags are not needed in every frame.  A car pixel
+point can be transformed directly because it lies on the same floor plane:
+
+\begin{verbatim}
+frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
+car_floor_point = cv2.perspectiveTransform(car_pixel, homography)
+\end{verbatim}
+
+The bottom-center of the car detection is used when the desired point is the
+car's contact with the field; another explicitly defined point can be used
+for the assignment's car-center convention.  The camera and tags must remain
+fixed while the saved $H$ is used.  If the camera is moved, the lens
+calibration can usually be reused, but the AprilTag correspondences and $H$
+must be recomputed.
 
 \begin{figure}[ht]
 \centering
@@ -162,6 +204,61 @@ image point with $H$.  These checks verify both the tag-center convention
 and the millimeter scale.}
 \label{fig:checks}
 \end{figure}
+
+\section{How the displayed values are obtained}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=.92\textwidth]{detection_result_with_matrix.png}
+\caption{Example output of the complete localization pipeline.  The
+overlay shows the detected car, pixel coordinates, world coordinates in
+millimeters, linear velocity, orientation \(\theta\), angular velocity, and
+processing FPS.}
+\label{fig:detection-output}
+\end{figure}
+
+The detection window reports the result of several simple steps.  First,
+SAM3 detects the car and returns its bounding box
+\((u_{\min},v_{\min},u_{\max},v_{\max})\).  The image position is taken from
+the box, using its horizontal center and its bottom edge:
+\[
+u=\frac{u_{\min}+u_{\max}}{2},\qquad v=v_{\max}.
+\]
+This gives the pixel coordinate shown as ``pixel''.  The point is then
+undistorted and transformed by the saved homography:
+\[
+\begin{bmatrix}x'\\y'\\w'\end{bmatrix}
+=H\begin{bmatrix}u\\v\\1\end{bmatrix},
+\qquad
+(x,y)=\left(\frac{x'}{w'},\frac{y'}{w'}\right).
+\]
+The resulting $(x,y)$ is shown as ``world'' in millimeters.
+
+For two consecutive detections, the program uses their timestamps to
+calculate linear velocity:
+\[
+dx=\frac{x_t-x_{t-1}}{t_t-t_{t-1}},\qquad
+dy=\frac{y_t-y_{t-1}}{t_t-t_{t-1}}.
+\]
+The displayed velocity is therefore the movement of the car on the field,
+not the movement in pixels.
+
+The car mask also supplies an orientation estimate.  The coordinates of
+the mask pixels are given to principal component analysis (PCA).  PCA finds
+the longest axis of the mask, and its image angle is calculated with:
+\[
+\theta=\operatorname{atan2}(a_y,a_x).
+\]
+The angle is converted to degrees and shown as ``theta''.  Comparing two
+angles gives angular velocity:
+\[
+\omega=\frac{\theta_t-\theta_{t-1}}{t_t-t_{t-1}},
+\]
+with angle wrapping used so that a change across \(+180^\circ/-180^\circ\)
+is treated as a small rotation.  Thus the values in the image are produced
+from one detected car point, the homography, and differences between
+successive timestamped detections.  FPS is the inverse of the average
+processing time per frame.
 
 \section{Complete processing chain}
 

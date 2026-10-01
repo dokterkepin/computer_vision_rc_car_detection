@@ -48,8 +48,8 @@ def main():
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--camera-calibration", default="calibration/matrix/c920_charuco_calibration.npz")
-    parser.add_argument("--field-width-mm", type=float, default=1500.0)
-    parser.add_argument("--field-height-mm", type=float, default=1200.0)
+    parser.add_argument("--field-width-mm", type=float, default=725.0)
+    parser.add_argument("--field-height-mm", type=float, default=365.0)
     parser.add_argument("--output", default="calibration/matrix/homography_v2.npz")
     args = parser.parse_args()
 

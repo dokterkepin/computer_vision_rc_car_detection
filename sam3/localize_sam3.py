@@ -90,9 +90,9 @@ def count_miss(track, max_miss):
 
 
 def world_position(homography, box):
-    # The bottom-center is the point where the car touches the field.
+    # The assignment reports the real-world center of the detected car.
     image_point = np.array(
-        [[[(box[0] + box[2]) / 2.0, box[3]]]],
+        [[[(box[0] + box[2]) / 2.0, (box[1] + box[3]) / 2.0]]],
         dtype=np.float32,
     )
     return cv2.perspectiveTransform(image_point, homography)[0, 0]
@@ -109,6 +109,27 @@ def mask_orientation(mask):
     _, eigenvectors, _ = cv2.PCACompute2(points, mean=None)
     axis = eigenvectors[0]
     return float(np.degrees(np.arctan2(axis[1], axis[0])))
+
+
+def world_orientation(homography, mask, offset):
+    if mask is None:
+        return None
+    y_coordinates, x_coordinates = np.nonzero(mask)
+    if len(x_coordinates) < 10:
+        return None
+
+    points = np.column_stack((x_coordinates, y_coordinates)).astype(np.float32)
+    mean, eigenvectors, _ = cv2.PCACompute2(points, mean=None)
+    axis = eigenvectors[0] * 100.0
+    center = mean[0]
+    local_points = np.array([[center, center + axis]], dtype=np.float32)
+    full_points = local_points + np.asarray(offset, dtype=np.float32)
+    field_points = cv2.perspectiveTransform(
+        full_points.reshape(1, 2, 2),
+        homography,
+    )[0]
+    direction = field_points[1] - field_points[0]
+    return float(np.degrees(np.arctan2(direction[1], direction[0])))
 
 
 def wrapped_angle_difference(current, previous):
@@ -163,8 +184,8 @@ def draw_result(
         3,
     )
     u, v = image_point
-    x_mm, y_mm = field_point
-    dx, dy = velocity
+    y_mm, x_mm = field_point
+    dy, dx = velocity
     cv2.circle(frame, (u, v), 8, (0, 0, 255), -1)
     cv2.putText(
         frame,
@@ -177,8 +198,8 @@ def draw_result(
     )
     status_lines = (
         f"ID: {car_id}  pixel: ({u}, {v})",
-        f"world: ({x_mm:.1f}, {y_mm:.1f}) mm",
-        f"velocity: ({dx:.1f}, {dy:.1f}) mm/s",
+        f"world (y, x): ({y_mm:.1f}, {x_mm:.1f}) mm",
+        f"velocity (dy, dx): ({dy:.1f}, {dx:.1f}) mm/s",
         f"theta: {angle:.1f} deg  angular: {angular_velocity:.1f} deg/s",
         f"FPS: {fps:.1f}",
     )
@@ -197,8 +218,8 @@ def draw_result(
 def draw_missing_status(frame, car_id, fps):
     status_lines = (
         f"ID: {car_id}  pixel: (-1, -1)",
-        "world: (-1000.0, -1000.0) mm",
-        "velocity: (-1000.0, -1000.0) mm/s",
+        "world (y, x): (-1000.0, -1000.0) mm",
+        "velocity (dy, dx): (-1000.0, -1000.0) mm/s",
         "theta: -1000.0 deg  angular: -1000.0 deg/s",
         f"FPS: {fps:.1f}",
     )
@@ -285,7 +306,7 @@ def main():
             timestamp_us = (time.monotonic_ns() - started) // 1_000
             now = time.monotonic()
 
-            x_mm = y_mm = theta = dx = dy = angular_velocity = MISSING
+            y_mm = x_mm = theta = dy = dx = angular_velocity = MISSING
             u = v = -1
             if found is not None:
                 box, score, mask = found
@@ -293,26 +314,26 @@ def main():
                 u = int((box[0] + box[2]) / 2)
                 v = int(box[3])
                 current_position = world_position(homography, box)
-                x_mm, y_mm = map(float, current_position)
-                theta = mask_orientation(mask)
+                y_mm, x_mm = map(float, current_position)
+                theta = world_orientation(homography, mask, offset)
                 if theta is None:
                     theta = MISSING
 
                 if previous_time is not None and previous_position is not None:
                     dt = now - previous_time
                     if dt > 0:
-                        dx = (x_mm - previous_position[0]) / dt
-                        dy = (y_mm - previous_position[1]) / dt
+                        dy = (y_mm - previous_position[0]) / dt
+                        dx = (x_mm - previous_position[1]) / dt
                         if previous_angle != MISSING and theta != MISSING:
                             angular_velocity = wrapped_angle_difference(theta, previous_angle) / dt
                 update_track(track, box)
                 previous_time = now
-                previous_position = (x_mm, y_mm)
+                previous_position = (y_mm, x_mm)
                 previous_angle = theta
                 draw_result(
                     frame, box, score, mask, offset, args.car_id,
                     (u, v), current_position, theta,
-                    (dx, dy), angular_velocity,
+                    (dy, dx), angular_velocity,
                     1.0 / max(time.perf_counter() - loop_started, 1e-9),
                 )
             else:
@@ -336,8 +357,8 @@ def main():
                 draw_missing_status(frame, args.car_id, fps)
 
             message = (
-                f'{timestamp_us}:{args.car_id},{x_mm:.1f},{y_mm:.1f},'
-                f'{theta:.1f},{dx:.1f},{dy:.1f},{angular_velocity:.1f},{u},{v}\n'
+                f'{timestamp_us}:{args.car_id},{y_mm:.1f},{x_mm:.1f},'
+                f'{theta:.1f},{dy:.1f},{dx:.1f},{angular_velocity:.1f},{u},{v}\n'
             )
             if udp_socket:
                 udp_socket.sendto(message.encode("utf-8"), udp_address)

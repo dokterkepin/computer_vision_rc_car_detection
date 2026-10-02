@@ -5,27 +5,44 @@
 \usepackage[margin=1.65cm]{geometry}
 \usepackage{graphicx}
 \usepackage{amsmath,amssymb}
+\usepackage{booktabs}
 \usepackage{caption}
 \usepackage{microtype}
 \usepackage{tikz}
 \usetikzlibrary{positioning,arrows.meta}
 \usepackage[colorlinks=true,linkcolor=blue,urlcolor=blue]{hyperref}
-\usepackage[UTF8]{ctex}
+\usepackage[UTF8]{ctex} \setCJKmainfont{Noto Serif CJK TC} 
 
-\graphicspath{{photo/}}
+\graphicspath{{photo/}{result/plots/}{result/report_figures/}}
 \captionsetup{font=footnotesize,skip=3pt}
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{3pt}
 
+% ---------------------------------------------------------------------------
+% Calibration values quoted in Section 4.  UPDATE THESE AFTER RECALIBRATING.
+% ---------------------------------------------------------------------------
+\newcommand{\calFx}{1433.9}
+\newcommand{\calFy}{1433.9}
+\newcommand{\calCx}{1010.3}
+\newcommand{\calCy}{538.1}
+\newcommand{\calKone}{0.0490}
+\newcommand{\calKtwo}{-0.1324}
+\newcommand{\calPone}{-0.0033}
+\newcommand{\calPtwo}{-0.0006}
+\newcommand{\calKthree}{-0.0893}
+\newcommand{\calErr}{0.199}
+
 \title{\vspace{-1.2em}Computer Vision: RC-Car Global Vision\vspace{-0.5em}}
-\author{KEVIN 常凱文 \\ \small Computer Vision --- Assignment 1, National Taiwan Normal University}
-\date{June 2026}
+\author{常凱文  61575082H | 詹喆閎 61575040h \\ \small Computer Vision --- Assignment 1, National Taiwan Normal University}
+\date{October 2026}
 
 \begin{document}
 \maketitle
 \vspace{-1.5em}
 
+%==========================================================================
 \section{Introduction and objective}
+\label{sec:intro}
 
 The goal is to build a global-vision server for an RC-car playing field.  A
 camera is mounted on a selfie stick or tripod at a side angle so that the
@@ -42,45 +59,128 @@ planar homography.  The required output for each detected car is
 \textbf{orientation} & $\theta$ in degrees\\
 \textbf{velocity} & $(dx,dy)$ in millimeters per second\\
 \textbf{angular velocity} & degrees per second\\
-\textbf{image position} & $(u,v)$ pixel coordinates of the car center
+\textbf{image position} & $(u,v)$ pixel coordinates of the car\\
 \end{tabular}
 \end{center}
 
-\section{Car detection}
+\textbf{Notation.}  Field coordinates $(x,y)$ are in millimeters.  The
+$x$-axis points from AprilTag ID~0 to ID~1, the $y$-axis from ID~0 to ID~3
+(Section~\ref{sec:tags}), and the orientation $\theta$ is measured
+counter-clockwise from the $+x$ axis, seen from above.  The velocity is
+$(v_x,v_y)=(dx,dy)$ and the angular velocity is $\omega$.
 
-Ultralytics SAM3 detects the RC car with the text prompt
-\texttt{toy car}.  For every camera frame, the image is passed to SAM3,
-which returns a confidence score, a segmentation mask, and a bounding box.
-The pixel center is obtained from the detected box (or mask) and is used as
-the image coordinate $(u,v)$.  Comparing consecutive positions and their
-timestamps gives image motion; after the homography, the same calculation
-gives $(dx,dy)$ in millimeters per second.  The orientation is obtained from
-the direction of the car, and the difference between consecutive orientations
-gives angular velocity.
+\textbf{Reading the screenshots.}  The program's on-screen overlay, console
+output and CSV files label the two field coordinates in the order
+\emph{(y, x)}.  Only the \emph{labels} are in that order: the first printed
+number is the $x$ of this report and the second is the $y$, and likewise the
+printed velocity pair is $(v_x,v_y)$.  For example, the handwritten note
+``724, 145'' (marked $y$, $x$) in Fig.~\ref{fig:cases} means
+$(x,y)=(724,145)$\,mm.  Every equation and table in this report uses $(x,y)$.
+
+%==========================================================================
+\section{System overview}
+
+\begin{center}
+\begin{tikzpicture}[node distance=5mm, >=Stealth,
+  box/.style={draw, rounded corners=2pt, align=center, minimum height=10mm,
+              inner sep=3pt, font=\footnotesize}]
+\node[box] (cam) {Camera\\$1920\times1080$};
+\node[box, right=of cam] (und) {Undistort\\$K,\ \mathbf d$};
+\node[box, right=of und] (det) {SAM3 detection\\and crop tracking};
+\node[box, right=of det] (hom) {Homography\\$H$};
+\node[box, right=of hom] (out) {$x,y,\theta,v_x,v_y,\omega$\\UDP / console};
+\draw[->] (cam) -- (und);
+\draw[->] (und) -- (det);
+\draw[->] (det) -- node[above, font=\scriptsize] {$u,v$} (hom);
+\draw[->] (hom) -- (out);
+\end{tikzpicture}
+\end{center}
+
+For each frame the server \textbf{(1)} captures and undistorts the image;
+\textbf{(2)} detects the car with SAM3 and obtains its box and mask;
+\textbf{(3)} maps the box center through $H$ to obtain $(x,y)$ in
+millimeters; \textbf{(4)} estimates $\theta$ from the mask; and
+\textbf{(5)} uses consecutive timestamped measurements to calculate linear
+and angular velocity.  It publishes
+\texttt{timestamp:ID,x,y,theta,vx,vy,omega,u,v}, with every missing field set
+to $-1000$ (and $(u,v)=(-1,-1)$) when no car is found.
+
+%==========================================================================
+\section{Car detection and tracking}
+\label{sec:detect}
+
+Ultralytics SAM3 detects the RC car with the text prompt \texttt{toy car}.
+SAM3 is an open-vocabulary segmenter: the prompt is converted to a vector by a
+text encoder and compared with image regions, so the car is found without any
+training on our data.  For each image SAM3 returns, per instance, a
+confidence score $s\in[0,1]$, a bounding box
+$(u_{\min},v_{\min},u_{\max},v_{\max})$ and a binary segmentation mask.  Only
+the instance with the highest score is kept, and it is accepted when
+$s\ge 0.3$.  The model runs in half precision with an internal input size of
+448~px for the whole project (the camera frame itself is $1920\times1080$).
+This gives about 13--15 frames per second on an NVIDIA RTX~4060~Ti in the
+overlays of this report.
+
+\textbf{Crop tracking.}  The car occupies only a few hundred pixels of the
+frame, so after the first detection SAM3 is run only on a square window
+around the expected car position.  The window is resized to the model input,
+so the car covers more pixels and is detected more reliably.  (The run time
+is set by the model input size and not by the window size, so the benefit is
+accuracy, not speed.)  With $\mathbf c_t$ the box center at frame $t$ and
+$d_t=\max(u_{\max}-u_{\min},\,v_{\max}-v_{\min})$ the box size, the center of
+the next window is the prediction
+\[
+\hat{\mathbf c}_{t+1}=\mathbf c_t+\mathbf q_t,\qquad
+\mathbf q_t=0.6\,\mathbf q_{t-1}+0.4\,(\mathbf c_t-\mathbf c_{t-1}),
+\]
+where $\mathbf q_t$ is a smoothed estimate of the pixel displacement per
+frame, and its side length is
+\[
+w_{t+1}=\max\bigl\{\,320\ \text{px},\ 4\,d_t\,(1+\tfrac12 m)\bigr\},
+\]
+with $m$ the number of consecutive frames without a detection, so the window
+widens while the car is lost.  After more than five consecutive misses the
+system returns to a full-frame search.
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=.62\textwidth]{track_car.png}
 \caption{SAM3 live result.  The green mask is the segmented car, the
 rectangle is its bounding box, and the red points are the tracked center.
-The camera frame is \(1920\times1080\); \texttt{imgsz=644} is only the
-model's internal inference size.}
+The camera frame is \(1920\times1080\); the model's internal inference size
+is 448~px.}
 \label{fig:sam3}
 \end{figure}
 
+%==========================================================================
 \section{Camera calibration}
 
 The lens causes distortion, so pixel coordinates are corrected before
-mapping.  A printed Charuco board using \texttt{DICT\_6X6\_250}, 25-mm
-squares, and 18-mm markers is observed at different positions and angles.
-OpenCV detects the Charuco corners and estimates the camera matrix $K$ and
-distortion coefficients with \texttt{cv2.calibrateCamera()}:
-
-\begin{verbatim}
-error, K, distortion, rvecs, tvecs =
-    cv2.calibrateCamera(object_points, image_points, image_size, ...)
-undistorted = cv2.undistort(frame, K, distortion)
-\end{verbatim}
+mapping.  A point $(X,Y,Z)$ in camera coordinates has normalized coordinates
+$a=X/Z$, $b=Y/Z$ and $r^2=a^2+b^2$.  With the radial coefficients
+$k_1,k_2,k_3$ and tangential coefficients $p_1,p_2$ of the OpenCV model, the
+distorted coordinates and the resulting pixel position are
+\begin{align*}
+a_d &= a\,(1+k_1r^2+k_2r^4+k_3r^6)+2p_1ab+p_2(r^2+2a^2),\\
+b_d &= b\,(1+k_1r^2+k_2r^4+k_3r^6)+p_1(r^2+2b^2)+2p_2ab,\\
+u &= f_x a_d + c_x,\qquad v = f_y b_d + c_y,
+\end{align*}
+where $K=\begin{bmatrix}f_x&0&c_x\\0&f_y&c_y\\0&0&1\end{bmatrix}$ is the camera
+matrix and $\mathbf d=(k_1,k_2,p_1,p_2,k_3)$.  A printed Charuco board
+(\texttt{DICT\_6X6\_250}, $7\times5$ squares of 25\,mm, markers of 18\,mm) is
+observed in at least 15 different positions and orientations.  OpenCV detects
+the Charuco corners, whose positions on the board are known, and
+\texttt{cv2.calibrateCamera()} finds $K$, $\mathbf d$ and the board poses that
+minimize the reprojection error
+\[
+E=\sum_{i,j}\bigl\lVert \mathbf u_{ij}-\pi\bigl(K,\mathbf d,R_i,\mathbf t_i,\mathbf X_j\bigr)\bigr\rVert^2 ,
+\]
+where $\mathbf u_{ij}$ is the detected corner $j$ in view $i$ and $\pi$ is the
+projection above.  The result is
+$f_x=\calFx$, $f_y=\calFy$, $c_x=\calCx$, $c_y=\calCy$ (pixels),
+$\mathbf d=(\calKone,\ \calKtwo,\ \calPone,\ \calPtwo,\ \calKthree)$, and an RMS
+reprojection error of \calErr\ px.  Each frame is then corrected with
+\texttt{cv2.undistort(frame, K, d)}.
 
 \begin{figure}[ht]
 \centering
@@ -92,7 +192,9 @@ runtime resolution.}
 \label{fig:charuco}
 \end{figure}
 
+%==========================================================================
 \section{AprilTag field coordinate frame}
+\label{sec:tags}
 
 Four fixed \texttt{tag36h11} AprilTags outside the playing area define a
 known rectangle.  The physical dimensions are measured from tag center to
@@ -105,24 +207,18 @@ tag center, not from paper edges:
 \node[anchor=west] at (7.1,0) {ID 1};
 \node[anchor=east] at (-.1,2) {ID 3};
 \node[anchor=west] at (7.1,2) {ID 2};
-\draw[<->] (0,-.42) -- node[fill=white,inner sep=1pt] {\(\text{field width}\)} (7,-.42);
-\draw[<->] (7.45,0) -- node[fill=white,inner sep=1pt,rotate=90] {\(\text{field height}\)} (7.45,2);
+\draw[<->] (0,-.42) -- node[fill=white,inner sep=1pt] {\(\text{field width } W\)} (7,-.42);
+\draw[<->] (7.45,0) -- node[fill=white,inner sep=1pt,rotate=90] {\(\text{field height } H\)} (7.45,2);
+\draw[->,thick] (0.3,0.3) -- (1.3,0.3) node[right] {$x$};
+\draw[->,thick] (0.3,0.3) -- (0.3,1.5) node[above] {$y$};
 \end{tikzpicture}
+
+\footnotesize Top view, schematic and not to scale.
 \end{center}
 
-In this arrangement, ID 0 is the origin $(0,0)$, ID 1 is
-$(W,0)$, ID 2 is $(W,H)$, and ID 3 is $(0,H)$.  Thus the labels in the
-AprilTag photograph mean
-\[
-\begin{array}{ccc}
-\text{ID 3} & \text{--- } W\text{ mm ---} & \text{ID 2}\\[-2pt]
-\vert && \vert\\[-2pt]
-\text{ID 0} & \text{--- } W\text{ mm ---} & \text{ID 1}
-\end{array}
-\]
-where the vertical separation is $H$ mm.  The drawing is a top view and all
-dimensions are between marker centers.  In the measured setup,
-$W=280$ mm and $H=340$ mm.
+In this arrangement, ID~0 is the origin $(0,0)$, ID~1 is $(W,0)$, ID~2 is
+$(W,H)$ and ID~3 is $(0,H)$.  In the measured setup, $W=280$\,mm and
+$H=340$\,mm.
 
 \begin{figure}[ht]
 \centering
@@ -134,34 +230,35 @@ four non-collinear correspondences were found.}
 \label{fig:tags}
 \end{figure}
 
-\section{Homography and real-world output}
+%==========================================================================
+\section{Homography and real-world position}
 
-The floor is a two-dimensional plane, even though its image is tilted by the
-camera.  The camera height, tilt, and rotation do not need to be measured
-manually.  They are contained in the relationship between the four detected
-AprilTag centers and their known floor coordinates.  First, lens distortion is
-removed.  The detected tag centers then form image points
-$p_i=(u_i,v_i)$ and the measured layout forms world points
-$P_i=(x_i,y_i)$.  OpenCV computes the image-to-floor transformation:
-
-\begin{verbatim}
-H, _ = cv2.findHomography(image_points, world_points)
-floor_point = cv2.perspectiveTransform(pixel_point, H)
-\end{verbatim}
-
-The formula behind these OpenCV functions uses homogeneous coordinates:
+The floor is a plane, even though its image is tilted by the camera.  The
+camera height, tilt and rotation do not need to be measured manually: they are
+contained in the relationship between the four detected AprilTag centers and
+their known floor coordinates.  After lens distortion is removed, the detected
+tag centers give image points $\mathbf u_i=(u_i,v_i)$ and the measured layout
+gives floor points $\mathbf X_i=(x_i,y_i)$.  A plane-to-plane projective map is
+written in homogeneous coordinates as
 \[
-\begin{bmatrix}x'\\y'\\w'\end{bmatrix}
-=
-H\begin{bmatrix}u\\v\\1\end{bmatrix},
-\qquad
-x=\frac{x'}{w'},\quad y=\frac{y'}{w'}.
+\lambda\begin{bmatrix}x\\y\\1\end{bmatrix}
+= H\begin{bmatrix}u\\v\\1\end{bmatrix},
+\qquad H=(h_{ij})\in\mathbb R^{3\times 3},\quad \lambda\neq 0,
 \]
-The matrix $H$ has nine entries, but multiplying every entry by the same
-number does not change the mapping, so it has eight independent values.  Each
-known point correspondence supplies two equations.  Four non-collinear
-AprilTag centers therefore provide the eight equations needed to solve for
-$H$.  In this project, the correspondences are
+which is equivalent to
+\[
+x=\frac{h_{11}u+h_{12}v+h_{13}}{h_{31}u+h_{32}v+h_{33}},\qquad
+y=\frac{h_{21}u+h_{22}v+h_{23}}{h_{31}u+h_{32}v+h_{33}} .
+\]
+Multiplying $H$ by a nonzero constant does not change the mapping, so $H$ has
+eight degrees of freedom (OpenCV fixes $h_{33}=1$).  Each correspondence
+$\mathbf u_i\leftrightarrow\mathbf X_i$ gives two equations that are linear in
+the entries of $H$,
+\[
+h_{11}u_i+h_{12}v_i+h_{13}-x_i\,(h_{31}u_i+h_{32}v_i+h_{33})=0,\qquad
+h_{21}u_i+h_{22}v_i+h_{23}-y_i\,(h_{31}u_i+h_{32}v_i+h_{33})=0 ,
+\]
+so four correspondences, no three of them collinear, determine $H$.  Here
 \[
 \begin{array}{c|c}
 \text{detected pixel center} & \text{known floor coordinate}\\
@@ -172,27 +269,27 @@ $H$.  In this project, the correspondences are
 \text{ID 3 center} & (0,H)
 \end{array}
 \]
-where $W$ and $H$ are the measured center-to-center distances in
-millimeters.  Thus the tags provide both the shape of the coordinate frame
-and its physical scale.  The matrix automatically accounts for the fact
-that the far side of the field occupies fewer pixels than the near side:
-the perspective division by $w'$ changes the local scale over the image.
-No manual ``millimeters per pixel'' value or camera tilt angle is required.
-
-After $H$ is saved, the tags are not needed in every frame.  A car pixel
-point can be transformed directly because it lies on the same floor plane:
+and $W,H$ are the measured center-to-center distances.  The tags provide both
+the shape of the coordinate frame and its physical scale.  The division by
+$h_{31}u+h_{32}v+h_{33}$ makes the local scale vary over the image, so the
+far side of the field, which occupies fewer pixels per millimeter, is handled
+automatically; no manual ``millimeters per pixel'' value or camera tilt angle
+is needed.  In OpenCV:
 
 \begin{verbatim}
-frame = cv2.undistort(frame, camera_matrix, dist_coeffs)
-car_floor_point = cv2.perspectiveTransform(car_pixel, homography)
+H, _ = cv2.findHomography(image_points, world_points)
+floor_point = cv2.perspectiveTransform(pixel_point, H)
 \end{verbatim}
 
-The bottom-center of the car detection is used when the desired point is the
-car's contact with the field; another explicitly defined point can be used
-for the assignment's car-center convention.  The camera and tags must remain
-fixed while the saved $H$ is used.  If the camera is moved, the lens
-calibration can usually be reused, but the AprilTag correspondences and $H$
-must be recomputed.
+After $H$ is saved the tags are not needed in every frame.  The reported
+position is the image of the \emph{center of the detection box},
+$\mathbf c=\bigl(\tfrac{u_{\min}+u_{\max}}2,\tfrac{v_{\min}+v_{\max}}2\bigr)$,
+under $H$.  Strictly, $H$ is exact only for points on the floor plane; the
+center of the box lies slightly above the floor because the car has height,
+which can add a small systematic offset (Section~\ref{sec:mapping}).  The
+camera and tags must remain fixed while the saved $H$ is used.  If the camera
+is moved, the lens calibration can usually be reused, but the AprilTag
+correspondences and $H$ must be recomputed.
 
 \begin{figure}[ht]
 \centering
@@ -205,71 +302,297 @@ and the millimeter scale.}
 \label{fig:checks}
 \end{figure}
 
-\section{How the displayed values are obtained}
+%==========================================================================
+\section{Orientation and velocities}
 
 \begin{figure}[ht]
 \centering
 \includegraphics[width=.92\textwidth]{detection_result_with_matrix.png}
 \caption{Example output of the complete localization pipeline.  The
 overlay shows the detected car, pixel coordinates, world coordinates in
-millimeters, linear velocity, orientation \(\theta\), angular velocity, and
+millimeters (printed as ``world (y, x)'' but in the order $(x,y)$, see
+Section~\ref{sec:intro}), linear velocity, orientation $\theta$, angular velocity and
 processing FPS.}
 \label{fig:detection-output}
 \end{figure}
 
-The detection window reports the result of several simple steps.  First,
-SAM3 detects the car and returns its bounding box
-\((u_{\min},v_{\min},u_{\max},v_{\max})\).  The image position is taken from
-the box, using its horizontal center and its bottom edge:
-\[
-u=\frac{u_{\min}+u_{\max}}{2},\qquad v=v_{\max}.
-\]
-This gives the pixel coordinate shown as ``pixel''.  The point is then
-undistorted and transformed by the saved homography:
-\[
-\begin{bmatrix}x'\\y'\\w'\end{bmatrix}
-=H\begin{bmatrix}u\\v\\1\end{bmatrix},
-\qquad
-(x,y)=\left(\frac{x'}{w'},\frac{y'}{w'}\right).
-\]
-The resulting $(x,y)$ is shown as ``world'' in millimeters.
+\textbf{Pixel position.}  The displayed image position is the horizontal
+center and the bottom edge of the box,
+$(u,v)=\bigl(\tfrac{u_{\min}+u_{\max}}2,\ v_{\max}\bigr)$.  The world position
+$(x,y)$ is computed from the box center as described in the previous section.
 
-For two consecutive detections, the program uses their timestamps to
-calculate linear velocity:
+\textbf{Linear velocity.}  For two consecutive detections at times $t_k$ and
+$t_{k-1}$,
 \[
-dx=\frac{x_t-x_{t-1}}{t_t-t_{t-1}},\qquad
-dy=\frac{y_t-y_{t-1}}{t_t-t_{t-1}}.
+v_x=\frac{x_k-x_{k-1}}{t_k-t_{k-1}},\qquad
+v_y=\frac{y_k-y_{k-1}}{t_k-t_{k-1}} .
 \]
-The displayed velocity is therefore the movement of the car on the field,
-not the movement in pixels.
+This is the motion of the car on the field, not in pixels.  It is a raw
+finite difference, without smoothing, and $t_k$ is the time at which the
+frame is processed.  After a lost detection the previous sample is discarded,
+so the velocity is reported as missing until two consecutive detections exist.
 
-The car mask also supplies an orientation estimate.  The coordinates of
-the mask pixels are given to principal component analysis (PCA).  PCA finds
-the longest axis of the mask, and its image angle is calculated with:
+\textbf{Orientation by PCA.}  Let $\mathbf p_1,\dots,\mathbf p_N$ be the pixel
+coordinates of the mask, $\bar{\mathbf p}$ their mean, and
 \[
-\theta=\operatorname{atan2}(a_y,a_x).
+\Sigma=\frac1N\sum_{i=1}^{N}(\mathbf p_i-\bar{\mathbf p})(\mathbf p_i-\bar{\mathbf p})^{\!\top}.
 \]
-The angle is converted to degrees and shown as ``theta''.  Comparing two
-angles gives angular velocity:
+The principal axis $\mathbf e$ is the unit eigenvector of $\Sigma$ with the
+largest eigenvalue, i.e.\ the longest direction of the car.  To obtain the
+direction on the floor, the two image points $\bar{\mathbf p}$ and
+$\bar{\mathbf p}+100\,\mathbf e$ are both mapped through $H$ to
+$(x_0,y_0)$ and $(x_1,y_1)$, which accounts for perspective, and
 \[
-\omega=\frac{\theta_t-\theta_{t-1}}{t_t-t_{t-1}},
+\theta=\operatorname{atan2}(y_1-y_0,\ x_1-x_0)\cdot\frac{180^\circ}{\pi}.
 \]
-with angle wrapping used so that a change across \(+180^\circ/-180^\circ\)
-is treated as a small rotation.  Thus the values in the image are produced
-from one detected car point, the homography, and differences between
-successive timestamped detections.  FPS is the inverse of the average
-processing time per frame.
 
-\section{Complete processing chain}
+\textbf{Angular velocity.}
+\[
+\omega=\frac{\operatorname{wrap}(\theta_k-\theta_{k-1})}{t_k-t_{k-1}},\qquad
+\operatorname{wrap}(\delta)=\bigl((\delta+180^\circ)\bmod 360^\circ\bigr)-180^\circ,
+\]
+so that a step across $+180^\circ/-180^\circ$ is treated as a small rotation.
 
-The server therefore performs the following sequence for each frame:
-\textbf{(1)} capture and undistort the image; \textbf{(2)} detect the car
-with SAM3 and obtain $(u,v)$; \textbf{(3)} transform the point with $H$ to
-obtain $(x,y)$ in millimeters; \textbf{(4)} estimate $\theta$ from the car
-direction; and \textbf{(5)} use timestamped consecutive measurements to
-calculate linear and angular velocity.  It then publishes the timestamp,
-car ID, world position, orientation, velocities, and image coordinates in
-the required format.  If no car is detected, the position fields are
-$(-1000.0,-1000.0)$.
+\subsection{A flaw of the PCA orientation: the sign ambiguity}
+\label{sec:pca}
+
+An eigenvector is defined only up to sign: if $\mathbf e$ is a unit
+eigenvector of $\Sigma$, so is $-\mathbf e$, and the numerical routine may
+return either.  The two choices give angles that differ by $180^\circ$
+(Fig.~\ref{fig:pca}).  PCA therefore measures the orientation of an
+\emph{axis} (a line, $\theta \bmod 180^\circ$), not the heading of the car:
+
+\begin{itemize}\setlength{\itemsep}{0pt}
+\item The front and the back of the car cannot be distinguished.
+\item The returned sign can change between consecutive frames, so $\theta$
+ can jump by $180^\circ$, for example between $+90^\circ$ and $-90^\circ$
+ when the car is aligned with the $y$-axis.  The wrapping function maps such
+ a jump to $\pm180^\circ$, so $\omega=\pm180^\circ/(t_k-t_{k-1})$.  At the
+ observed $\approx14$\,FPS this is a spurious spike of about
+ $\pm2.5\times10^{3}\ {}^\circ/\mathrm{s}$ although the car did not rotate.
+\item Orientation errors must be compared modulo $180^\circ$.  The
+ evaluation in Section~\ref{sec:eval} does this, so it measures the error of
+ the axis and not of a heading.
+\end{itemize}
+
+\begin{center}
+\begin{tikzpicture}[>=Stealth]
+\draw[thick, rotate=35] (0,0) ellipse (1.3cm and 0.45cm);
+\draw[->, thick, red] (0,0) -- (35:1.9) node[right] {$\mathbf e$: $\theta$};
+\draw[->, thick, blue] (0,0) -- (215:1.9) node[left] {$-\mathbf e$: $\theta-180^\circ$};
+\draw[gray, dashed] (-2.2,0) -- (2.2,0);
+\end{tikzpicture}
+\captionof{figure}{Both $\mathbf e$ and $-\mathbf e$ describe the same mask axis;
+which one PCA returns is arbitrary, so $\theta$ is known only modulo
+$180^\circ$.}
+\label{fig:pca}
+\end{center}
+
+A possible remedy, not implemented here, is to keep, among $\theta$ and
+$\theta\pm180^\circ$, the value closest to the previous estimate, and to
+choose the initial sign from a visual cue such as the windshield, which would
+also give a true heading.
+
+%==========================================================================
+\section{Evaluation}
+\label{sec:eval}
+
+Two aspects are evaluated: whether the car is \emph{detected}, and whether the
+detected car is \emph{placed correctly} on the field.  Linear and angular
+velocity were not tested against a ground truth.
+
+\subsection{Detection: ROC analysis}
+
+Each camera frame is labelled by the operator as ``car present'' ($1$) or
+``car absent'' ($0$) while SAM3 runs on it.  The confidence threshold of SAM3
+is set to $0.001$ so that a score is available for every frame; the score of a
+frame is the highest instance confidence, or $0$ if nothing is found.  A
+detection is predicted whenever the score is at least a threshold $\tau$, and
+\[
+\mathrm{TPR}(\tau)=\frac{TP}{TP+FN},\qquad
+\mathrm{FPR}(\tau)=\frac{FP}{FP+TN},
+\]
+where $TP$ are present frames with a detection, $FN$ present frames without,
+$FP$ absent frames with a detection and $TN$ absent frames without.  The ROC
+curve plots $\mathrm{TPR}$ against $\mathrm{FPR}$ for all $\tau$, its area is
+the AUC, and the Youden index $J=\mathrm{TPR}-\mathrm{FPR}$ selects a
+compromise threshold.  The recording has 1159 labelled frames, 641 with the
+car and 518 without, taken on the raw full frame at input size 448 and
+without crop tracking.  The result is shown in Fig.~\ref{fig:roc}.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=.50\textwidth]{roc_curve.png}
+\caption{ROC curve of the SAM3 toy-car detector (AUC $=0.891$).  The red
+point is the threshold with the largest Youden index, $\tau=0.216$.}
+\label{fig:roc}
+\end{figure}
+
+\begin{center}
+\small
+\begin{tabular}{lccccccccc}
+\toprule
+$\tau$ & 0.1 & 0.2 & 0.3 & 0.4 & 0.5 & 0.6 & 0.7 & 0.8 & 0.9\\
+\midrule
+TPR & 0.953 & 0.757 & 0.635 & 0.584 & 0.510 & 0.465 & 0.398 & 0.286 & 0.000\\
+FPR & 0.693 & 0.100 & 0.004 & 0.002 & 0.000 & 0.000 & 0.000 & 0.000 & 0.000\\
+\bottomrule
+\end{tabular}
+
+\captionof{table}{True and false positive rates at fixed thresholds.}
+\end{center}
+
+The AUC of $0.891$ (Fig.~\ref{fig:roc}) shows that the score separates the two classes well but
+not perfectly.  The threshold used in operation, $\tau=0.3$, is a
+high-precision setting: almost no false alarms (FPR $=0.004$) at the price of
+missing about 36\,\% of the present frames in this detector-only test.  The
+Youden-optimal $\tau=0.216$ gives TPR $=0.736$ at FPR $=0.062$.  This test
+does not include the crop tracking of Section~\ref{sec:detect}, which gives the car more
+pixels; in the mapping test below the same detector, with tracking, reached a
+score of $0.94$--$0.97$ and found the car in every frame, but the effect of
+tracking on the ROC was not measured separately.
+
+\subsection{Mapping: position and orientation error}
+\label{sec:mapping}
+
+The car is placed at a known field position and orientation $(x^*,y^*,\theta^*)$,
+marked with a note as in Fig.~\ref{fig:cases}, and left stationary while 200
+consecutive frames are recorded.  Several test cases at different positions
+and orientations were evaluated, recorded in separate sessions; the
+coordinates of each case refer to the field frame of its own calibration.
+With the estimate $(\hat x,\hat y,\hat\theta)$ of a frame, the errors are
+\[
+e_{\mathrm{pos}}=\sqrt{(\hat x-x^*)^2+(\hat y-y^*)^2},\qquad
+e_{\theta}=\Bigl|\bigl((\hat\theta-\theta^*+90^\circ)\bmod180^\circ\bigr)-90^\circ\Bigr| .
+\]
+The orientation error is taken modulo $180^\circ$ because of the PCA
+ambiguity of Section~\ref{sec:pca}; for example $\theta^*=-90^\circ$ and
+$+90^\circ$ describe the same axis.
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=.96\textwidth]{eval_caseA.jpg}\\[3pt]
+\includegraphics[width=.96\textwidth]{eval_caseB.jpg}\\[3pt]
+\includegraphics[width=.96\textwidth]{eval_caseC.jpg}
+\caption{Cases A, B and C (top to bottom).  Left: the live view with the
+overlay (printed ``world (y, x)'', in the order $(x,y)$ of this report, and
+``velocity'' in the order $(v_x,v_y)$).  Right: the ground-truth note next to
+the car; its handwritten $y$/$x$ marks show the swapped naming, so
+``724, 145'' means $x^*=724$\,mm, $y^*=145$\,mm.  The cyan square is the
+tracking window.}
+\label{fig:cases}
+\end{figure}
+
+\begin{center}
+\small
+\begin{tabular}{cccccccc}
+\toprule
+ & \multicolumn{3}{c}{ground truth} & \multicolumn{2}{c}{$e_{\mathrm{pos}}$ (mm)} & \multicolumn{2}{c}{$e_\theta$ ($^\circ$)}\\
+\cmidrule(lr){2-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
+Case & $x^*$ (mm) & $y^*$ (mm) & $\theta^*$ ($^\circ$) & mean & max & mean & max\\
+\midrule
+A & $724$ & $145$ & $0$   & 2.65 & 3.41 & 0.45 & 1.01\\
+B & $-103$ & $75$ & $45$  & 1.56 & 1.79 & 0.45 & 0.68\\
+C & $285$ & $183$ & $-90$ & 0.38 & 0.64 & 2.37 & 2.77\\
+\midrule
+all & & & & 1.53 & 3.41 & 1.09 & 2.77\\
+\bottomrule
+\end{tabular}
+
+\captionof{table}{Stationary mapping error, 200 frames per case.  The car was
+detected in all $600$ frames.}
+\label{tab:mapping}
+\end{center}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=.49\textwidth]{mapping_position_error.png}\hfill
+\includegraphics[width=.49\textwidth]{mapping_orientation_error.png}
+\caption{Mean and maximum error per case.  The orientation error is the axis
+error modulo $180^\circ$.}
+\label{fig:errors}
+\end{figure}
+
+Table~\ref{tab:mapping} and Fig.~\ref{fig:errors} summarize the errors.
+
+\textbf{Accuracy and precision.}  The frame-to-frame scatter is very small
+(Fig.~\ref{fig:offsets} and Table~\ref{tab:bias}): the standard deviation of the
+position is at most $0.38$\,mm and that of the angle at most $0.18^\circ$.  The
+error is therefore almost entirely a constant offset (bias), not noise: the
+estimate is precise, and slightly shifted.  Possible sources, which were not
+separated experimentally, are the hand-measured tag spacing, residual lens
+distortion, the height of the box center above the floor, and the uncertainty
+of placing the car by hand, which is itself of the order of a millimeter and
+is not quantified.  The measured errors are close to that limit, so they should
+be read as an upper bound on the true system error rather than a precise
+value.
+
+\begin{center}
+\small
+\begin{tabular}{ccccc}
+\toprule
+Case & bias $(\bar x-x^*,\ \bar y-y^*)$ (mm) & std $(\sigma_x,\sigma_y)$ (mm) & bias of $\theta$ ($^\circ$) & $\sigma_\theta$ ($^\circ$)\\
+\midrule
+A & $(-2.64,\ -0.06)$ & $(0.38,\ 0.19)$ & $-0.45$ & $0.18$\\
+B & $(+1.43,\ +0.60)$ & $(0.08,\ 0.09)$ & $-0.45$ & $0.09$\\
+C & $(-0.11,\ +0.35)$ & $(0.09,\ 0.09)$ & $-2.37$ & $0.12$\\
+\bottomrule
+\end{tabular}
+
+\captionof{table}{Bias and scatter of the 200 frames of each case.}
+\label{tab:bias}
+\end{center}
+
+\begin{figure}[ht]
+\centering
+\includegraphics[width=.62\textwidth]{mapping_offsets.png}
+\caption{Estimate minus ground truth for every frame.  Each case forms a tight
+cluster that is offset from the origin.}
+\label{fig:offsets}
+\end{figure}
+
+%==========================================================================
+\section{Discussion and limitations}
+
+\begin{itemize}\setlength{\itemsep}{0pt}
+\item \textbf{Velocity and angular velocity are not validated.}  They are
+ computed as described but were not compared with a ground truth.  They are
+ raw, unsmoothed differences of noisy measurements taken at about 14\,FPS, so
+ they are noisy.  In the three stationary screenshots of
+ Fig.~\ref{fig:cases} the printed speed is below $4$\,mm/s; this is an
+ observation, not a test.
+\item \textbf{The orientation is an axis, not a heading,} and it can flip by
+ $180^\circ$ (Section~\ref{sec:pca}).  This also produces spikes in $\omega$.
+\item \textbf{The mapping test is static.}  It covers a few positions with
+ 200 correlated frames each, and the ground truth was placed by hand.  It does
+ not describe accuracy for a moving car, where motion blur and the delay
+ between exposure and processing add error.
+\item \textbf{The ROC comes from a single recording} with three label blocks
+ (absent, present, absent), so its frames are strongly correlated, and it
+ measures the detector without crop tracking.
+\item \textbf{Scene assumptions.}  The mapping is valid for points on the floor
+ plane with the camera and tags fixed; moving the camera requires a new
+ homography.  One car is tracked at a time (the highest-scoring instance).
+\end{itemize}
+
+%==========================================================================
+\section{Conclusion}
+
+A calibrated single camera, SAM3 with a text prompt, crop tracking and a
+four-tag homography are sufficient to report the position and orientation of
+a small RC car on the field.  In the stationary tests the position error was
+at most $3.4$\,mm (mean $1.5$\,mm) and the axis orientation error at most
+$2.8^\circ$ (mean $1.1^\circ$), the detector reached an AUC of $0.891$, and the
+whole pipeline runs at about 14\,FPS.  The main weaknesses are the unvalidated
+velocities and the $180^\circ$ ambiguity of the PCA orientation.  A recording
+of the complete system is stored in
+\texttt{result/final\_result\_car\_detected\_with\_matrix.mp4}
+($1280\times720$, 30\,FPS, 178\,s).
+
+\medskip
+\textbf{Files.}  Calibration: \texttt{calibration/}; localization:
+\texttt{sam3/localize\_sam3.py}; detection ROC:
+\texttt{evaluation/roc/}; mapping evaluation:
+\texttt{evaluation/mapping/}; figures: \texttt{result/}.
 
 \end{document}

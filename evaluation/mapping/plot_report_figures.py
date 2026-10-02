@@ -2,11 +2,7 @@
 
 Same data as plot_mapping_results.py, but every case is labelled in the report's
 notation: (x, y) in millimetres and theta in degrees, with x along the tag
-ID 0 -> ID 1 edge and y along ID 0 -> ID 3.
-
-The CSV files and the on-screen overlay print the two field coordinates in the
-order (y, x).  The VALUES are in the order (first, second) = (x, y) of the
-report; only the column names are swapped, so no number is changed here.
+ID 0 -> ID 1 edge and y along ID 0 -> ID 3.  The CSV columns use the same names.
 """
 
 import csv
@@ -23,10 +19,9 @@ CASE_NAMES = "ABC"
 
 def load_case(path):
     rows = list(csv.DictReader(path.open(newline="")))
-    # CSV column "truth_y_mm" holds the report's x, "truth_x_mm" the report's y.
-    truth = np.array([float(rows[0]["truth_y_mm"]), float(rows[0]["truth_x_mm"])])
+    truth = np.array([float(rows[0]["truth_x_mm"]), float(rows[0]["truth_y_mm"])])
     theta_truth = float(rows[0]["truth_theta_deg"])
-    estimate = np.array([[float(r["estimated_y_mm"]), float(r["estimated_x_mm"])]
+    estimate = np.array([[float(r["estimated_x_mm"]), float(r["estimated_y_mm"])]
                          for r in rows])
     position_error = np.array([float(r["position_error_mm"]) for r in rows])
     orientation_error = np.array([float(r["orientation_error_deg"]) for r in rows])

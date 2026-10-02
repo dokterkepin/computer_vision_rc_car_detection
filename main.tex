@@ -18,6 +18,9 @@
 \setlength{\parindent}{0pt}
 \setlength{\parskip}{3pt}
 
+% Short note under a section heading that names the code implementing it.
+\newenvironment{impl}{\par\smallskip\noindent\footnotesize\textbf{Implementation.}\ }{\par\smallskip}
+
 % ---------------------------------------------------------------------------
 % Calibration values quoted in Section 4.  UPDATE THESE AFTER RECALIBRATING.
 % ---------------------------------------------------------------------------
@@ -44,6 +47,14 @@
 \section{Introduction and objective}
 \label{sec:intro}
 
+\begin{impl}
+The complete program is \path{sam3/localize_sam3.py}; it prints the output
+message and can also send it over UDP (\texttt{--udp-host}, \texttt{--udp-port}).
+The other folders hold the calibration (\path{calibration/}), the evaluation
+(\path{evaluation/}) and the results (\path{result/}); see the file list at the
+end of this report.
+\end{impl}
+
 The goal is to build a global-vision server for an RC-car playing field.  A
 camera is mounted on a selfie stick or tripod at a side angle so that the
 whole field is visible.  Image measurements are converted to the real
@@ -69,16 +80,27 @@ $x$-axis points from AprilTag ID~0 to ID~1, the $y$-axis from ID~0 to ID~3
 counter-clockwise from the $+x$ axis, seen from above.  The velocity is
 $(v_x,v_y)=(dx,dy)$ and the angular velocity is $\omega$.
 
-\textbf{Reading the screenshots.}  The program's on-screen overlay, console
-output and CSV files label the two field coordinates in the order
-\emph{(y, x)}.  Only the \emph{labels} are in that order: the first printed
-number is the $x$ of this report and the second is the $y$, and likewise the
-printed velocity pair is $(v_x,v_y)$.  For example, the handwritten note
-``724, 145'' (marked $y$, $x$) in Fig.~\ref{fig:cases} means
-$(x,y)=(724,145)$\,mm.  Every equation and table in this report uses $(x,y)$.
+\textbf{Reading the screenshots.}  The screenshots and the demo video were
+recorded with an earlier version of the program whose on-screen overlay
+labelled the two field coordinates \emph{(y, x)}.  Only the \emph{labels} were
+in that order: the first printed number is the $x$ of this report and the
+second is the $y$, and likewise the printed velocity pair is $(v_x,v_y)$.  For
+example, the handwritten note ``724, 145'' (marked $y$, $x$) in
+Fig.~\ref{fig:cases} means $(x,y)=(724,145)$\,mm.  The program, its output
+and the stored data now use the labels $(x,y)$ and $(v_x,v_y)$ as well.  Every
+equation and table in this report uses $(x,y)$.
 
 %==========================================================================
 \section{System overview}
+
+\begin{impl}
+\path{sam3/localize_sam3.py}, function \texttt{main()}: the per-frame loop
+undistorts the frame, calls \texttt{detect\_car}, then \texttt{world\_position}
+and \texttt{world\_orientation}, computes the velocities and prints the message.
+It loads \path{calibration/matrix/c920_charuco_calibration.npz} and
+\path{calibration/matrix/homography_v2.npz} (options \texttt{--camera-calibration}
+and \texttt{--homography}).
+\end{impl}
 
 \begin{center}
 \begin{tikzpicture}[node distance=5mm, >=Stealth,
@@ -108,6 +130,14 @@ to $-1000$ (and $(u,v)=(-1,-1)$) when no car is found.
 %==========================================================================
 \section{Car detection and tracking}
 \label{sec:detect}
+
+\begin{impl}
+\path{sam3/localize_sam3.py}: \texttt{load\_predictor} (SAM3, half precision,
+input size 448), \texttt{detect\_car} (text prompt, best instance, box and
+mask), \texttt{choose\_region} and \texttt{crop\_window} (the tracking window),
+\texttt{update\_track} and \texttt{count\_miss} (smoothed displacement and the
+miss counter).
+\end{impl}
 
 Ultralytics SAM3 detects the RC car with the text prompt \texttt{toy car}.
 SAM3 is an open-vocabulary segmenter: the prompt is converted to a vector by a
@@ -155,6 +185,16 @@ is 448~px.}
 %==========================================================================
 \section{Camera calibration}
 
+\begin{impl}
+\path{calibration/calibrate_c920_charuco.py}: live capture of Charuco views
+(key \texttt{s} saves a view, \texttt{c} calibrates) and
+\texttt{cv2.calibrateCamera}.  The printed board is
+\path{calibration/markers/calibrx-charuco-175x125mm.pdf}; the result
+(\texttt{camera\_matrix}, \texttt{dist\_coeffs}, \texttt{reprojection\_error}) is
+saved in \path{calibration/matrix/c920_charuco_calibration.npz} and applied with
+\texttt{cv2.undistort} in every script that reads the camera.
+\end{impl}
+
 The lens causes distortion, so pixel coordinates are corrected before
 mapping.  A point $(X,Y,Z)$ in camera coordinates has normalized coordinates
 $a=X/Z$, $b=Y/Z$ and $r^2=a^2+b^2$.  With the radial coefficients
@@ -196,6 +236,14 @@ runtime resolution.}
 \section{AprilTag field coordinate frame}
 \label{sec:tags}
 
+\begin{impl}
+\path{calibration/detect_markers.py}: \texttt{detect\_markers} and
+\texttt{marker\_centers} find the tag centers, and \texttt{field\_points} assigns
+the floor coordinates $(0,0)$, $(W,0)$, $(W,H)$, $(0,H)$ to IDs 0--3.  The field
+size is given with \texttt{--field-width-mm} and \texttt{--field-height-mm}.  The
+printed tags are \path{calibration/markers/tag36h11_0,1,2,3.pdf}.
+\end{impl}
+
 Four fixed \texttt{tag36h11} AprilTags outside the playing area define a
 known rectangle.  The physical dimensions are measured from tag center to
 tag center, not from paper edges:
@@ -232,6 +280,17 @@ four non-collinear correspondences were found.}
 
 %==========================================================================
 \section{Homography and real-world position}
+
+\begin{impl}
+\path{calibration/detect_markers.py} computes $H$ with
+\texttt{cv2.findHomography} from the four tag centers and saves it (key
+\texttt{s}) in \path{calibration/matrix/homography_v2.npz}.
+\path{calibration/test_homography.py} converts a clicked pixel to field
+coordinates and prints the error against a known point
+(\texttt{--known-x-mm}, \texttt{--known-y-mm}); it was used for the checks in
+Fig.~\ref{fig:checks}.  At run time \texttt{world\_position} in
+\path{sam3/localize_sam3.py} applies $H$ to the box center.
+\end{impl}
 
 The floor is a plane, even though its image is tilted by the camera.  The
 camera height, tilt and rotation do not need to be measured manually: they are
@@ -305,6 +364,13 @@ and the millimeter scale.}
 %==========================================================================
 \section{Orientation and velocities}
 
+\begin{impl}
+\path{sam3/localize_sam3.py}: \texttt{world\_orientation} (PCA of the mask,
+mapped through $H$), \texttt{wrapped\_angle\_difference} (the wrap function) and,
+in \texttt{main()}, the finite differences that give $v_x$, $v_y$ and $\omega$.
+The overlay is drawn by \texttt{draw\_result} and \texttt{draw\_missing\_status}.
+\end{impl}
+
 \begin{figure}[ht]
 \centering
 \includegraphics[width=.92\textwidth]{detection_result_with_matrix.png}
@@ -356,6 +422,12 @@ so that a step across $+180^\circ/-180^\circ$ is treated as a small rotation.
 \subsection{A flaw of the PCA orientation: the sign ambiguity}
 \label{sec:pca}
 
+\begin{impl}
+The eigenvector is taken in \texttt{world\_orientation}
+(\path{sam3/localize_sam3.py}) with \texttt{cv2.PCACompute2}; no sign correction is
+applied there.
+\end{impl}
+
 An eigenvector is defined only up to sign: if $\mathbf e$ is a unit
 eigenvector of $\Sigma$, so is $-\mathbf e$, and the numerical routine may
 return either.  The two choices give angles that differ by $180^\circ$
@@ -397,11 +469,26 @@ also give a true heading.
 \section{Evaluation}
 \label{sec:eval}
 
+\begin{impl}
+All evaluation code, raw data and tables are in \path{evaluation/}: the
+detection test in \path{evaluation/roc/} and the mapping test in
+\path{evaluation/mapping/}.
+\end{impl}
+
 Two aspects are evaluated: whether the car is \emph{detected}, and whether the
 detected car is \emph{placed correctly} on the field.  Linear and angular
 velocity were not tested against a ground truth.
 
 \subsection{Detection: ROC analysis}
+
+\begin{impl}
+\path{evaluation/roc/capture_live_roc.py} records the SAM3 score of each live
+frame with the operator's label (keys \texttt{1} and \texttt{0}) in
+\path{evaluation/roc/data/roc_data.csv}.  \path{evaluation/roc/plot_roc.py}
+computes the ROC curve, AUC and Youden threshold, writes
+\path{evaluation/roc/data/roc_thresholds.csv}, and draws the ROC figure
+(kept as \path{result/plots/roc_curve.png}).
+\end{impl}
 
 Each camera frame is labelled by the operator as ``car present'' ($1$) or
 ``car absent'' ($0$) while SAM3 runs on it.  The confidence threshold of SAM3
@@ -454,6 +541,15 @@ tracking on the ROC was not measured separately.
 
 \subsection{Mapping: position and orientation error}
 \label{sec:mapping}
+
+\begin{impl}
+\path{evaluation/mapping/evaluate_mapping.py} runs the full pipeline on a
+stationary car for 200 frames; the ground truth is given with
+\texttt{--true-x-mm}, \texttt{--true-y-mm} and \texttt{--true-theta-deg}.  It writes
+one sample file and one summary file per case to
+\path{evaluation/mapping/data/}.  \path{evaluation/mapping/plot_report_figures.py}
+reads these files and draws the figures in \path{result/report_figures/}.
+\end{impl}
 
 The car is placed at a known field position and orientation $(x^*,y^*,\theta^*)$,
 marked with a note as in Fig.~\ref{fig:cases}, and left stationary while 200

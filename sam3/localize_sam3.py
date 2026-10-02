@@ -184,8 +184,8 @@ def draw_result(
         3,
     )
     u, v = image_point
-    y_mm, x_mm = field_point
-    dy, dx = velocity
+    x_mm, y_mm = field_point
+    vx, vy = velocity
     cv2.circle(frame, (u, v), 8, (0, 0, 255), -1)
     cv2.putText(
         frame,
@@ -198,8 +198,8 @@ def draw_result(
     )
     status_lines = (
         f"ID: {car_id}  pixel: ({u}, {v})",
-        f"world (y, x): ({y_mm:.1f}, {x_mm:.1f}) mm",
-        f"velocity (dy, dx): ({dy:.1f}, {dx:.1f}) mm/s",
+        f"world (x, y): ({x_mm:.1f}, {y_mm:.1f}) mm",
+        f"velocity (vx, vy): ({vx:.1f}, {vy:.1f}) mm/s",
         f"theta: {angle:.1f} deg  angular: {angular_velocity:.1f} deg/s",
         f"FPS: {fps:.1f}",
     )
@@ -218,8 +218,8 @@ def draw_result(
 def draw_missing_status(frame, car_id, fps):
     status_lines = (
         f"ID: {car_id}  pixel: (-1, -1)",
-        "world (y, x): (-1000.0, -1000.0) mm",
-        "velocity (dy, dx): (-1000.0, -1000.0) mm/s",
+        "world (x, y): (-1000.0, -1000.0) mm",
+        "velocity (vx, vy): (-1000.0, -1000.0) mm/s",
         "theta: -1000.0 deg  angular: -1000.0 deg/s",
         f"FPS: {fps:.1f}",
     )
@@ -306,7 +306,7 @@ def main():
             timestamp_us = (time.monotonic_ns() - started) // 1_000
             now = time.monotonic()
 
-            y_mm = x_mm = theta = dy = dx = angular_velocity = MISSING
+            x_mm = y_mm = theta = vx = vy = angular_velocity = MISSING
             u = v = -1
             if found is not None:
                 box, score, mask = found
@@ -314,7 +314,7 @@ def main():
                 u = int((box[0] + box[2]) / 2)
                 v = int(box[3])
                 current_position = world_position(homography, box)
-                y_mm, x_mm = map(float, current_position)
+                x_mm, y_mm = map(float, current_position)
                 theta = world_orientation(homography, mask, offset)
                 if theta is None:
                     theta = MISSING
@@ -322,18 +322,18 @@ def main():
                 if previous_time is not None and previous_position is not None:
                     dt = now - previous_time
                     if dt > 0:
-                        dy = (y_mm - previous_position[0]) / dt
-                        dx = (x_mm - previous_position[1]) / dt
+                        vx = (x_mm - previous_position[0]) / dt
+                        vy = (y_mm - previous_position[1]) / dt
                         if previous_angle != MISSING and theta != MISSING:
                             angular_velocity = wrapped_angle_difference(theta, previous_angle) / dt
                 update_track(track, box)
                 previous_time = now
-                previous_position = (y_mm, x_mm)
+                previous_position = (x_mm, y_mm)
                 previous_angle = theta
                 draw_result(
                     frame, box, score, mask, offset, args.car_id,
                     (u, v), current_position, theta,
-                    (dy, dx), angular_velocity,
+                    (vx, vy), angular_velocity,
                     1.0 / max(time.perf_counter() - loop_started, 1e-9),
                 )
             else:
@@ -357,8 +357,8 @@ def main():
                 draw_missing_status(frame, args.car_id, fps)
 
             message = (
-                f'{timestamp_us}:{args.car_id},{y_mm:.1f},{x_mm:.1f},'
-                f'{theta:.1f},{dy:.1f},{dx:.1f},{angular_velocity:.1f},{u},{v}\n'
+                f'{timestamp_us}:{args.car_id},{x_mm:.1f},{y_mm:.1f},'
+                f'{theta:.1f},{vx:.1f},{vy:.1f},{angular_velocity:.1f},{u},{v}\n'
             )
             if udp_socket:
                 udp_socket.sendto(message.encode("utf-8"), udp_address)

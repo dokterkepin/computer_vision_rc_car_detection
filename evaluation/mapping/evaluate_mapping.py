@@ -169,8 +169,8 @@ def draw_overlay(frame, box, score, image_point, estimated_position,
     theta_text = "missing" if estimated_angle is None else f"{estimated_angle:.1f} deg"
     lines = [
         f"pixel: {pixel_text}",
-        f"world (y, x): {world_text}",
-        f"velocity: ({velocity[0]:.1f}, {velocity[1]:.1f}) mm/s",
+        f"world (x, y): {world_text}",
+        f"velocity (vx, vy): ({velocity[0]:.1f}, {velocity[1]:.1f}) mm/s",
         f"theta: {theta_text}",
         f"FPS: {fps:.1f}",
     ]
@@ -193,16 +193,16 @@ def main():
     parser.add_argument("--crop-scale", type=float, default=4.0)
     parser.add_argument("--min-crop", type=int, default=320)
     parser.add_argument("--max-miss", type=int, default=5)
-    parser.add_argument("--true-y-mm", type=float, default=103.0)
-    parser.add_argument("--true-x-mm", type=float, default=18311.0)
+    parser.add_argument("--true-x-mm", type=float, default=103.0)
+    parser.add_argument("--true-y-mm", type=float, default=18311.0)
     parser.add_argument("--true-theta-deg", type=float, default=45.0)
     parser.add_argument("--samples", type=int, default=200)
     parser.add_argument("--display-scale", type=float, default=1.0)
     parser.add_argument("--output-dir", default="evaluation/mapping/data")
     args = parser.parse_args()
 
-    true_y_mm = args.true_y_mm
     true_x_mm = args.true_x_mm
+    true_y_mm = args.true_y_mm
     true_theta_deg = args.true_theta_deg
     sample_count = args.samples
 
@@ -217,13 +217,13 @@ def main():
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    stem = f"y{true_y_mm:g}_x{true_x_mm:g}_theta{true_theta_deg:g}"
+    stem = f"x{true_x_mm:g}_y{true_y_mm:g}_theta{true_theta_deg:g}"
     samples_path = output_dir / f"{stem}.csv"
     summary_path = output_dir / f"{stem}_summary.csv"
 
     predictor = load_predictor(args.weights, args.imgsz)
     camera = open_camera(args.source, args.width, args.height, args.cam_fps)
-    true_position = np.array([true_y_mm, true_x_mm])
+    true_position = np.array([true_x_mm, true_y_mm])
     sample_rows = []
     position_errors = []
     orientation_errors = []
@@ -249,8 +249,8 @@ def main():
         with samples_path.open("w", newline="") as csv_file:
             writer = csv.writer(csv_file)
             writer.writerow([
-                "frame", "truth_y_mm", "truth_x_mm", "truth_theta_deg",
-                "score", "estimated_y_mm", "estimated_x_mm", "estimated_theta_deg",
+                "frame", "truth_x_mm", "truth_y_mm", "truth_theta_deg",
+                "score", "estimated_x_mm", "estimated_y_mm", "estimated_theta_deg",
                 "position_error_mm", "orientation_error_deg", "accepted",
             ])
             while True:
@@ -311,7 +311,7 @@ def main():
 
                 if collection_started and len(sample_rows) < sample_count:
                     row = [
-                        frame_number, true_y_mm, true_x_mm, true_theta_deg,
+                        frame_number, true_x_mm, true_y_mm, true_theta_deg,
                         "" if score is None else f"{score:.8f}",
                         "" if estimated_position is None else f"{estimated_position[0]:.4f}",
                         "" if estimated_position is None else f"{estimated_position[1]:.4f}",

@@ -1,4 +1,4 @@
-frame,truth_y_mm,truth_x_mm,truth_theta_deg,score,estimated_y_mm,estimated_x_mm,estimated_theta_deg,position_error_mm,orientation_error_deg,accepted
+frame,truth_x_mm,truth_y_mm,truth_theta_deg,score,estimated_x_mm,estimated_y_mm,estimated_theta_deg,position_error_mm,orientation_error_deg,accepted
 1376,285.0,183.0,-90.0,0.94335938,284.9513,183.3740,-92.3410,0.3772,2.3410,1
 1377,285.0,183.0,-90.0,0.94628906,284.7829,183.3459,-92.3930,0.4084,2.3930,1
 1378,285.0,183.0,-90.0,0.94433594,284.9527,183.4033,-92.2265,0.4061,2.2265,1

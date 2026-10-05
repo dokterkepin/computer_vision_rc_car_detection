@@ -1,0 +1,47 @@
+﻿NTNU Honesty Declaration
+------------------------
+
+
+I <KEVIN 常凱文>, <61575082H> hereby submit my material for assessment.
+I have worked together in a group with: <List of other group members>
+
+
+I certify that the following material submitted for evaluation in my course work 
+is my own work, except for material listed in the section 'External Sources' below.
+
+
+You are allowed to freely discuss the assignment with your classmates as long as the
+discussion is limited to what could reasonably be exchanged on a whiteboard or notepad. 
+If you exchange more information, then you must specify this in the 'External Section' below.
+
+
+In particular, I certify that with the exception of material listed in the section
+'External Sources' below:
+
+
+  1.) Myself and my group members have implemented the remainder of the program 
+  2.) I and my group members have run the tests and experiments and the results were as 
+       described in the report.
+  3.) The report describing my design, work, and experiments was written by myself and my
+       group members..
+
+
+External Sources
+----------------
+You are allowed to use external sources to complete your assignment without 
+disciplinary penalty as long as they are mentioned in this section.
+
+
+Some example entries may be:
+   I copied the part of my program that reads in the input from Jacky Baltes
+   I found a description of the GCD algorithm at http://www.teachmath.com/ and used it 
+      for the design of my program
+   I used the opencv library and its documentation for http://www.opencv.org
+   I used ChatGPT or similar AI models during the development of the following functions.
+
+
+List ALL sources of information that you used in this work.
+
+
+1.) Lecture slides by Jacky Baltes
+2.) use claude ai to study and help me debug error

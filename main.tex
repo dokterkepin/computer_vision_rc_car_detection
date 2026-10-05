@@ -195,8 +195,34 @@ saved in \path{calibration/matrix/c920_charuco_calibration.npz} and applied with
 \texttt{cv2.undistort} in every script that reads the camera.
 \end{impl}
 
-The lens causes distortion, so pixel coordinates are corrected before
-mapping.  A point $(X,Y,Z)$ in camera coordinates has normalized coordinates
+\textbf{Why a calibration is needed.}  A camera converts the direction of a
+ray into a pixel.  Figure~\ref{fig:focal} shows how: rays from the object cross
+at the nodal point of the lens and form an image on the sensor, and the
+\emph{focal length} $f$ is the distance from that point to the sensor.  By
+similar triangles, a point at lateral offset $X$ and distance $Z$ lands a
+distance $f\,X/Z$ from the image center, so $f$, expressed in pixels, is the
+scale that links pixels to viewing directions.  This scale and the pixel where
+the lens axis meets the sensor are different for every camera and cannot be read
+from a single picture.  In addition, a real lens bends straight lines,
+especially near the edges of the image.  The homography of
+Section~\ref{sec:tags} maps straight lines to straight lines, so it is only
+valid for undistorted pixels; otherwise the position error would grow towards
+the edges of the field.  The calibration measures the focal length, the image
+center and the distortion once, from a board of known size, and every later
+frame is corrected with them before it is used.
+
+% TODO: add the source / credit of the focal-length illustration below.
+\begin{figure}[ht]
+\centering
+\includegraphics[width=.88\textwidth]{focal_length_visualize.jpg}
+\caption{Focal length.  Rays from the object cross at the nodal point of the
+lens and form a (smaller, inverted) image on the sensor; the focal length is the
+distance from the nodal point to the sensor.}
+\label{fig:focal}
+\end{figure}
+
+OpenCV describes the lens with the following model.  A point $(X,Y,Z)$ in
+camera coordinates has normalized coordinates
 $a=X/Z$, $b=Y/Z$ and $r^2=a^2+b^2$.  With the radial coefficients
 $k_1,k_2,k_3$ and tangential coefficients $p_1,p_2$ of the OpenCV model, the
 distorted coordinates and the resulting pixel position are

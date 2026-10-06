@@ -1,0 +1,8 @@
+metric,value
+frames_evaluated,200
+accepted_detections,200
+detection_rate,1.0
+mean_position_error_mm,1.5562938879860209
+max_position_error_mm,1.7855460011084578
+mean_orientation_error_deg,0.4516707229614258
+max_orientation_error_deg,0.6770515441894531

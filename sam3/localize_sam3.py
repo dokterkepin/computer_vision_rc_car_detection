@@ -7,7 +7,7 @@ import numpy as np
 from ultralytics.models.sam import SAM3SemanticPredictor
 
 
-PROMPT = "toy car"
+PROMPT = "yellow duck"
 MISSING = -1000.0
 
 
@@ -249,7 +249,7 @@ def main():
     parser.add_argument("--crop-scale", type=float, default=4.0)
     parser.add_argument("--min-crop", type=int, default=320)
     parser.add_argument("--max-miss", type=int, default=5)
-    parser.add_argument("--display-scale", type=float, default=1.0)
+    parser.add_argument("--display-scale", type=float, default=0.5)
     parser.add_argument("--udp-host", default=None)
     parser.add_argument("--udp-port", type=int, default=5000)
     parser.add_argument("--car-id", type=int, default=1)

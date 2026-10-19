@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 import cv2
+from networkx import display
 import numpy as np
 
 
@@ -44,12 +45,12 @@ def field_points(field_width, field_height):
 
 def main():
     parser = argparse.ArgumentParser(description="Detect AprilTag field references.")
-    parser.add_argument("--source", default="/dev/video0")
+    parser.add_argument("--source", default="1")
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--camera-calibration", default="calibration/matrix/c920_charuco_calibration.npz")
-    parser.add_argument("--field-width-mm", type=float, default=725.0)
-    parser.add_argument("--field-height-mm", type=float, default=365.0)
+    parser.add_argument("--field-width-mm", type=float, default=620.0)
+    parser.add_argument("--field-height-mm", type=float, default=480.0)
     parser.add_argument("--output", default="calibration/matrix/homography_v2.npz")
     args = parser.parse_args()
 
@@ -69,12 +70,12 @@ def main():
     source = str(args.source).replace("/dev/video", "")
     camera = cv2.VideoCapture(
         int(source) if source.isdigit() else args.source,
-        cv2.CAP_V4L2,
+        cv2.CAP_DSHOW,
     )
     camera.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
     camera.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     camera.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
-    camera.set(cv2.CAP_PROP_FPS, 30)
+    camera.set(cv2.CAP_PROP_FPS, 60)
     camera.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     if not camera.isOpened():
         raise RuntimeError(f"could not open camera {args.source}")
@@ -121,7 +122,8 @@ def main():
             status += "  HOMOGRAPHY READY"
         cv2.putText(frame, status, (15, 30), cv2.FONT_HERSHEY_SIMPLEX,
                     0.8, (0, 200, 255), 2)
-        cv2.imshow("field marker calibration", frame)
+        display = cv2.resize(frame, None, fx=0.5, fy=0.5)
+        cv2.imshow("field marker calibration", display)
 
         key = cv2.waitKey(1) & 0xFF
         if key == ord("s") and homography is not None:
